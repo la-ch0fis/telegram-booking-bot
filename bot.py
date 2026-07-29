@@ -60,6 +60,7 @@ async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return DATETIME
 
 
+
 async def get_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parsed_iso, error_reason = parse_user_datetime(update.message.text)
 
@@ -90,7 +91,7 @@ async def get_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
             suggestions = " ".join([slot.strftime("%I:%M %p") for slot in available_slots[:3]]) # vailable_slots[:3] <-- Only shoes the first 3 suggestions to avoid screen flooding
             await update.message.reply_text(
                 f"Ese horario ya está ocupado. Horarios disponibles ese día: {suggestions}. "
-                f"¿Te gusataría alguno de estos?"
+                f"¿Te gusataría alguno de estos? Recuerda introducir la fecha con el formato: 'Julio 29, 4pm' para poder reservar."
             )
         return DATETIME # ask again, stay on same state
     
@@ -108,6 +109,7 @@ async def get_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"¡Reservación confirmada {name}!, {format_spanish_dates(start_dt)}. ¡Nos vemos entonces!"
     )
     return ConversationHandler.END
+
 
 
 async def cancel_booking_start(update: Update, context: ContextTypes.DEFAULT_TYPE):

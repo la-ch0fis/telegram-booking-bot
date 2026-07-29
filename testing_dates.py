@@ -14,7 +14,7 @@ LUNCH_END_HOUR = 14.5  # 2:30 PM
 
 date_obj = datetime.datetime.now(ZoneInfo("America/Mexico_City"))
 current = date_obj.replace(hour=BUSINESS_START_HOUR, minute=0, second=0, microsecond=0)
-day_end = date_obj.replace(hours=BUSINESS_END_HOUR, minute=0, second=0, microsecond=0)
+day_end = date_obj.replace(hour=BUSINESS_END_HOUR, minute=0, second=0, microsecond=0)
 
 
 print(f"current :{current}")

@@ -81,6 +81,7 @@ def get_calendar_service():
     return build('calendar', 'v3', credentials=creds)
 
 
+
 def resolve_relative_date(text):
     '''It scans the user's text for relative-date words like 'mañana', 
        checking longest phrases first to avoid partial-match mistakes, 
@@ -97,6 +98,7 @@ def resolve_relative_date(text):
     return text_lower
 
 
+
 def translate_spanish_month(text):
     '''Replaces Spanish month names (e.g. 'julio') with their English equivalents
        (e.g. 'july') so dateutil.parser can correctly interpret the text.
@@ -105,6 +107,7 @@ def translate_spanish_month(text):
     for es, en in SPANISH_MONTHS.items():
         text_lower = text_lower.replace(es, en)
     return text_lower
+
 
 
 def parse_user_datetime(raw_text):
@@ -190,7 +193,7 @@ def find_available_slots(service, date_obj, session_length_minutes):
         reason = is_within_business_hours(current)
         if reason is None:
             slot_end = current + datetime.timedelta(minutes=session_length_minutes)
-            print('slot_end value: ' + str(slot_end))
+            # print('slot_end value: ' + str(slot_end))
             is_free = check_availability(service, current.isoformat(), slot_end.isoformat())
             if is_free:
                 available_slots.append(current)
