@@ -91,7 +91,8 @@ async def get_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
             suggestions = " ".join([slot.strftime("%I:%M %p") for slot in available_slots[:3]]) # vailable_slots[:3] <-- Only shoes the first 3 suggestions to avoid screen flooding
             await update.message.reply_text(
                 f"Ese horario ya está ocupado. Horarios disponibles ese día: {suggestions}. "
-                f"¿Te gusataría alguno de estos? Recuerda introducir la fecha con el formato: 'Julio 29, 4pm' para poder reservar."
+                f"Por favor escribe la fecha con el horario que prefieras, por ejemplo: "
+                f"'Julio 30, 9am' o 'Julio 30, 9:30am'. "
             )
         return DATETIME # ask again, stay on same state
     
