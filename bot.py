@@ -7,7 +7,7 @@ from telegram.ext import (
 )
 from calendar_utils import (get_calendar_service, parse_user_datetime, 
     check_availability, create_booking_event, find_user_bookings, format_spanish_dates,
-    BUSINESS_START_HOUR, BUSINESS_END_HOUR
+    find_available_slots, BUSINESS_START_HOUR, BUSINESS_END_HOUR
 )
 import datetime
 from zoneinfo import ZoneInfo
@@ -24,11 +24,15 @@ NAME, DATETIME = range(2)
 SESSION_LENGHT_MINUTES = 90
 CONFIRM_CANCEL = range(3, 4)[0]
 
+
 ERROR_MESSAGES = {
-    "unclear_time": "Por favor incluye AM/PM (Ejemplo: 'Julio 27, 3pm').",
+    "unclear_time": "Por favor incluye AM/PM (Ejemplo: 'Julio 27, 3pm' o 'Mañana, 3pm').",
     "past_date": "Fecha pasada — por favor escoge una fecha futura.",
     "outside_hours": f"El horario de las sesiones es {BUSINESS_START_HOUR}am y {BUSINESS_END_HOUR - 12}pm. Selecciona una hora dentro de ese rango.",
     "ambigous_date": "Esa fecha no parece válida — por favor verifica el día y mes e intenta de nuevo (Ejemplo: ' Julio 27, 3pm').",
+    "sunday": "Disculpa, no agendamos sesiones los domingos. Por favor elige otro día.",
+    "holiday": "Es día festivo y no hay sesiones disponibles. Por favor elige otra fecha.",
+    "lunch_break": f"Horario reservado para la comida (1:00 PM — 2:30 PM). Por favor elige otro horario.",
     "unparseable": "Disculpa, no entendí — intenta de nuevo, por favor. Ejemplo: 'Julio 27, 3pm'"
 }
 
@@ -76,7 +80,18 @@ async def get_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return DATETIME
     
     if not is_available:
-        await update.message.reply_text("Ese horario ya esta ocupado. ¿Podrías interntar con otra fecha/hora?")
+        #await update.message.reply_text("Ese horario ya esta ocupado. ¿Podrías interntar con otra fecha/hora?")
+        available_slots = find_available_slots(service, start_dt, SESSION_LENGHT_MINUTES)
+        if not available_slots:
+            await update.message.reply_text("Ese horario ya está ocupado y no hay más espacios disponibles ese día. "
+                                            "¿Podrías intentar con otra fecha?"
+                                )
+        else:
+            suggestions = " ".join([slot.strftime("%I:%M %p") for slot in available_slots[:3]]) # vailable_slots[:3] <-- Only shoes the first 3 suggestions to avoid screen flooding
+            await update.message.reply_text(
+                f"Ese horario ya está ocupado. Horarios disponibles ese día: {suggestions}. "
+                f"¿Te gusataría alguno de estos?"
+            )
         return DATETIME # ask again, stay on same state
     
     name = context.user_data["name"]

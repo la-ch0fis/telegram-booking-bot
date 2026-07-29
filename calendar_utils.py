@@ -43,6 +43,21 @@ RELATIVE_DATES = {
 # We're not working all night, are we? OK, let's define that
 BUSINESS_START_HOUR = 9
 BUSINESS_END_HOUR = 20
+# Also, we need to eat and reset, dude!
+LUNCH_START_HOUR = 13  # 1 PM
+LUNCH_END_HOUR = 14.5  # 2:30 PM
+
+# Holidays, 
+# TODO: we need to do this automatic instead of updating these days each year
+HOLIDAYS_2026 = [
+    "2026-01-01",  # New year
+    "2026-02-02",  # Constitution day
+    "2026-03-16",  # Benito Juárez (observed)
+    "2026-05-01",  # Labor day
+    "2026-09-16",  # Idependence day
+    "2026-11-16",  # Revolution day
+    "2026-12-25",  # Christmas
+]
 
 
 def get_calendar_service():
@@ -133,8 +148,12 @@ def parse_user_datetime(raw_text):
 
         if dt < now: # NOTE: if dt < now: return None — catches any resolved date/time that's already in the past, like your July 2003 bug
             return None, "past_date"
-        if not is_within_business_hours(dt):
-            return None, "outside_hours"
+        
+        hours_check = is_within_business_hours(dt)
+        if hours_check is not None:
+            return None, hours_check
+        # if not is_within_business_hours(dt):
+        #    return None, "outside_hours"
         
         return dt.isoformat(), None
     
@@ -157,6 +176,28 @@ def check_availability(service, start_time, end_time):
     busy_times = result['calendars']['primary']['busy']
 
     return len(busy_times) == 0
+
+
+def find_available_slots(service, date_obj, session_length_minutes):
+    '''Scans a single day for available session slots, respecting business hours,
+       lunch break, and session length. Returns a list of available datetime objects.
+    '''
+    available_slots = []
+    current = date_obj.replace(hour=BUSINESS_START_HOUR, minute=0, second=0, microsecond=0)
+    day_end = date_obj.replace(hour=BUSINESS_END_HOUR, minute=0, second=0, microsecond=0)
+
+    while current + datetime.timedelta(minutes=session_length_minutes) <= day_end:
+        reason = is_within_business_hours(current)
+        if reason is None:
+            slot_end = current + datetime.timedelta(minutes=session_length_minutes)
+            print('slot_end value: ' + str(slot_end))
+            is_free = check_availability(service, current.isoformat(), slot_end.isoformat())
+            if is_free:
+                available_slots.append(current)
+        current += datetime.timedelta(minutes=30) # check every 30-min increment
+
+    return available_slots
+
 
 
 def create_booking_event(service, name, start_dt, end_dt, telegram_user_id):
@@ -197,11 +238,35 @@ def find_user_bookings(service, telegram_user_id):
     return events_result.get('items', [])
 
 
-def is_within_business_hours(dt):
-    '''Checks whether a given date falls within defined business hours 
-    '''
-    return BUSINESS_START_HOUR <= dt.hour < BUSINESS_END_HOUR
+def is_holiday(dt):
+    '''Check whether the given date falls on a defined Mexican holiday'''
+    return dt.strftime("%Y-%m-%d") in HOLIDAYS_2026
 
+
+def is_within_business_hours(dt):
+    '''Checks whether a given date falls within defined business hours.
+       Excludes Sundays entirely. 
+    '''
+    if dt.weekday() == 6:  # Monday=0....Sunday=6
+        return "sunday"
+    
+    if is_holiday(dt):
+        return "holiday"
+    
+    if not (BUSINESS_START_HOUR <= dt.hour < BUSINESS_END_HOUR):
+        return "outside_hours"
+    
+    time_as_decimal = dt.hour + dt.minute / 60
+    if LUNCH_START_HOUR <= time_as_decimal < LUNCH_END_HOUR:
+        return "lunch_break"
+    
+    return None
+# Real technical note, cuz — a small but meaningful difference: 
+# SQL's BETWEEN 9 AND 20 is normally INCLUSIVE on both ends (9 counts, AND 20 counts). 
+# Python's chained comparison here is inclusive on the LEFT (<=), but EXCLUSIVE on the RIGHT (<) — 
+# meaning dt.hour can be exactly 9, but NOT exactly 20. That's actually intentional here, cuz — 
+# we want the business day to run FROM 9am UP TO (but not including) 8pm, so a booking exactly AT 8pm wouldn't count as "within hours" 
+# (since the session would run past closing).    
 
 def format_spanish_dates(dt):
     '''Formats a datetime into natural, readable Spanish string
@@ -213,56 +278,3 @@ def format_spanish_dates(dt):
     time_str = dt.strftime("%I:%M %p").lstrip("0") # removes leading zero. e.g. "3:00 PM" not "03:00 PM"
 
     return f"{day} de {month} de {year} a las {time_str}"
-
-
-
-
-# # TESTING ======================================================DELETE THIS==========================================================
-# # We check the calendar
-
-# now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-# service = get_calendar_service()
-# events_result = service.events().list(
-#     calendarId='primary',
-#     timeMin=now, 
-#     maxResults=5, 
-#     singleEvents=True, 
-#     orderBy='startTime'
-# ).execute()
-
-# events = events_result.get('items', [])
-# # print(now)
-# for event in events:
-#     start_raw = event['start'].get('dateTime', event['start'].get('date'))
-#     summary = event['summary']
-
-#     if 'T' in start_raw:
-#         start_dt = datetime.datetime.fromisoformat(start_raw)
-#         start_ct = start_dt.astimezone(ZoneInfo('America/Mexico_City'))
-#         print(f"{start_ct.strftime('%Y-%m-%d %I:%M %p CT')} - {summary}")
-#     else:
-#         print(f"{start_raw} (all-day) - {summary}")
-
-
-
-
-
-# # ===========TESTING==========================
-# test_inputs = [
-#     "21/07/2026 4 pm",
-#     "julio 21 a las 4 pm",
-#     "july 21 4 pm",
-#     "21 de julio 4 pm",
-#     "pasado mañana a las 10am",    
-#     "asddfgtrews"
-# ]
-
-# for test in test_inputs:
-#     result = parse_user_datetime(test)
-#     print(f"Input: {test} -> Parsed: {result}")
-
-
-
-# for i in RELATIVE_DATES.items():
-#     print(i)
