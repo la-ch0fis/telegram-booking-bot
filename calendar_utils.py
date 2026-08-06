@@ -11,7 +11,6 @@ from dateutil import parser as date_parser
 # SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 # Getting holidays, we neeed to call google api for this shit, using the calendar id
 MEXICO_HOLIDAYS_CALENDAR_ID = "en.mexican.official#holiday@group.v.calendar.google.com"
-
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 
@@ -43,14 +42,13 @@ RELATIVE_DATES = {
 }
 
 
-
-
 # We're not working all night, are we? OK, let's define that
 BUSINESS_START_HOUR = 9
 BUSINESS_END_HOUR = 20
 # Also, we need to eat and reset, dude!
 LUNCH_START_HOUR = 13  # 1 PM
 LUNCH_END_HOUR = 14.5  # 2:30 PM
+MIN_DAYS_BETWEEN_BOOKINGS = 7 # Number of days the user has to wait in order to book a new session, also it helps with the flooding
 
 # Holidays, 
 # TODO: we need to do this automatic instead of updating these days each year

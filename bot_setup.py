@@ -5,14 +5,20 @@ from telegram.ext import (
 )
 from calendar_utils import (get_calendar_service, parse_user_datetime, 
     check_availability, create_booking_event, find_user_bookings, format_spanish_dates,
-    find_available_slots, get_mexico_holiday, BUSINESS_START_HOUR, BUSINESS_END_HOUR
+    find_available_slots, get_mexico_holiday, get_user_last_booking, BUSINESS_START_HOUR, 
+    BUSINESS_END_HOUR, MIN_DAYS_BETWEEN_BOOKINGS
 )
 import datetime
+import time
 from zoneinfo import ZoneInfo
 
 NAME, DATETIME = range(2)
 SESSION_LENGHT_MINUTES = 90
 CONFIRM_CANCEL = range(3, 4)[0]
+
+# --- Rate limiting config ---
+RATE_LIMIT_MAX_ATTEMPTS = 3
+RATE_LIMIT_WINDOW_SECONDS = 3600 # 1 hour
 
 ERROR_MESSAGES = {
     "unclear_time": "Por favor incluye AM/PM (Ejemplo: 'Julio 27, 3pm' o 'Mañana, 3pm').",
@@ -26,6 +32,24 @@ ERROR_MESSAGES = {
 }
 
 
+def check_rate_limit(context, telegram_user_id):
+    '''Checks is a user has exceeded allowed booking attempts within the rate-limit window'''
+    if "rate_limits" not in context.bot_data:
+        context.bot_data["rate_limits"] = {}
+    
+    now = time.time()
+    user_attempts = context.bot_data["rate_limits"].get(telegram_user_id, [])
+    user_attempts = [t for t in user_attempts if now - t < RATE_LIMIT_WINDOW_SECONDS]
+
+    if len(user_attempts) >= RATE_LIMIT_MAX_ATTEMPTS:
+        context.bot_data["rate_limits"][telegram_user_id] = user_attempts
+        return False
+    
+    user_attempts.append(now)
+    context.bot_data["rate_limits"][telegram_user_id] = user_attempts
+    return True
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("!Hola! ¿Cómo estás? Soy tu asistente virtual Oosouji 🌿\n\n" 
                                     "Puedo ayudarte a agendar tu sesión de Reiki y Bio-magnetismo.\n\n"
@@ -34,11 +58,36 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     "/cancelar — Cancelar sesión existente\n"
                                     "¡Escribe /agendar cuando quieras empezar!"
                 )
-    
+# -------------------------------------------------------------------------------------------------------------------------
+# Real reasoning on that weird -MIN_DAYS < days_since < MIN_DAYS check: 
+# since last_booking could be a PAST session (already happened, days_since positive) 
+# OR a FUTURE one already booked (days_since would be negative, since "now minus a future date" is negative) — 
+# this range check catches BOTH cases, Cochise: too-soon-after-a-past-session AND too-close-to-an-already-upcoming-one, in one check.   
+# DO NOT FORGET ABOUT THIS
 
 async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_user_id = update.effective_user.id
 
+    if not check_rate_limit(context, telegram_user_id):
+        await update.message.reply_text(
+            "Haz alcanzado el límite de intentos por hora.\n"
+            "Por favor intenta de nuevo más tarde."
+            )
+        return ConversationHandler.END
+    
+    service = get_calendar_service()
+    last_booking = get_user_last_booking(service, telegram_user_id)
+
+    if last_booking:
+        now = datetime.datetime.now(ZoneInfo("America/Mexico_City"))
+        days_since = (now - last_booking.astimezone(ZoneInfo("America/Mexico_City")))
+        if -MIN_DAYS_BETWEEN_BOOKINGS < days_since < MIN_DAYS_BETWEEN_BOOKINGS:
+            await update.message.reply_text(
+                f"Por motivos de eficiencia del tratamiento, se recomienda esperar al menos "
+                f"{MIN_DAYS_BETWEEN_BOOKINGS} días entre sesiones. Por favor intenta agendar más adelante."
+                f"En caso de urgencia por favor contáctame directamente."
+            )
+            return ConversationHandler.END
     await update.message.reply_text("¡Vamos a agendar tu sesión! ¿Cómo te llamas?")
     return NAME
 
@@ -257,7 +306,6 @@ def build_application(token):
     app.add_handler(cancel_handler)
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_command))
-
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_message))
 
     return app
