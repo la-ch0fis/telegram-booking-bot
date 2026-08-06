@@ -9,7 +9,7 @@ from dateutil import parser as date_parser
 
 
 # SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-# Getting holidays, we neeed to call google api for this shit, using the calendar id
+# Getting holidays, call google api for this shit, get the calendar id specific for México, it'll give us all the holidays
 MEXICO_HOLIDAYS_CALENDAR_ID = "en.mexican.official#holiday@group.v.calendar.google.com"
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
@@ -111,13 +111,14 @@ def resolve_relative_date(text):
     '''It scans the user's text for relative-date words like 'mañana', 
        checking longest phrases first to avoid partial-match mistakes, 
        calculates the ACTUAL date those words represent, and swaps the word 
-       for a real date string before dateutil ever tries to parse it.
+       for a real date string before dateutil ever tries to parse it
+       using a month NAME (not numeric) so 'dayfirst' parsing can't misread it.
     '''
     text_lower = text.lower()
     for phrase, days_offset in sorted(RELATIVE_DATES.items(), key=lambda x: -len(x[0])):
         # print(phrase, days_offset)
         if phrase in text_lower:
-            target_date = (datetime.datetime.now(ZoneInfo("America/Mexico_City")) + datetime.timedelta(days=days_offset)).strftime("%Y-%m-%d")
+            target_date = (datetime.datetime.now(ZoneInfo("America/Mexico_City")) + datetime.timedelta(days=days_offset)).strftime("%d-%B-%Y")
             text_lower = text_lower.replace(phrase, target_date)
             return text_lower
     return text_lower
@@ -148,9 +149,10 @@ def parse_user_datetime(raw_text, holidays_list):
     #     return None, hours_check
     
     text = resolve_relative_date(raw_text)
+    print(f'resolve_relative_date: {text}')
     text = translate_spanish_month(text)
     # text = strip_filler(text)
-    print(text)
+    print(f'translate_spanish_month: {text}')
 
     # Require an explicit time marker or avoid ambiguous numbers like "3" or "4"
     # has_am_pm / has_colon_time — checks if the input has EITHER "am"/"pm" somewhere, 
@@ -166,17 +168,22 @@ def parse_user_datetime(raw_text, holidays_list):
 
         dt1 = date_parser.parse(text, dayfirst=True, fuzzy=False, default=default1)
         dt2 = date_parser.parse(text, dayfirst=True, fuzzy=False, default=default2)
+        print(f'dt1: {dt1}')
+        print(f'dt2: {dt2}')
 
         if (dt1.day, dt1.month) != (dt2.day, dt2.month):
             return None, "ambigous_date" # the day/month wasn't explicitly given/valid
         
         now_naive = datetime.datetime.now(ZoneInfo("America/Mexico_City")).replace(tzinfo=None, minute=0, second=0, microsecond=0)
+        print(f'now_naive: {str(now_naive)}')
         dt = date_parser.parse(text, dayfirst=True, fuzzy=False, default=now_naive)
+        print(f'dt parsed: {dt}')
         dt = dt.replace(tzinfo=ZoneInfo("America/Mexico_City"))
-        print('dt antes' + str(dt))
+        print('dt for compare: ' + str(dt))
         now = datetime.datetime.now(ZoneInfo("America/Mexico_City"))
-        print('now ' + str(now))
         print('dt ' + str(dt))
+        print('now ' + str(now))
+        # print(f'now text: {str(now)}')
 
         if dt < now: # NOTE: if dt < now: return None — catches any resolved date/time that's already in the past, like your July 2003 bug
             return None, "past_date"
@@ -324,6 +331,7 @@ def get_user_last_booking(service, telegram_user_id):
         return None
     latest = max(events, key=lambda e: e['start'].get('dateTime', e['start'].get('date')))
     start_raw = latest['start'].get('dateTime')
+    print(f'start_raw: {start_raw}')
     return datetime.datetime.fromisoformat(start_raw) if start_raw else None
 
 

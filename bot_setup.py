@@ -12,6 +12,12 @@ import datetime
 import time
 from zoneinfo import ZoneInfo
 
+# --------------------------------------------------------------------------------------------------
+# TODO: READ THIS, PLEASE!
+# NOTE: Flip to False during testing, back to True for real use, DO NOT FORGET!
+ENFORCE_WEEKLY_LIMIT = False  
+#---------------------------------------------------------------------------------------------------
+
 NAME, DATETIME = range(2)
 SESSION_LENGHT_MINUTES = 90
 CONFIRM_CANCEL = range(3, 4)[0]
@@ -77,14 +83,19 @@ async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     service = get_calendar_service()
     last_booking = get_user_last_booking(service, telegram_user_id)
+    print(ENFORCE_WEEKLY_LIMIT)
 
-    if last_booking:
+    if ENFORCE_WEEKLY_LIMIT and last_booking:
         now = datetime.datetime.now(ZoneInfo("America/Mexico_City"))
-        days_since = (now - last_booking.astimezone(ZoneInfo("America/Mexico_City")))
+        days_since = (now - last_booking.astimezone(ZoneInfo("America/Mexico_City"))).days
+        print(f'days_since: {days_since}')
+        print(f'MIN_DAYS_BETWEEN_BOOKINGS: {MIN_DAYS_BETWEEN_BOOKINGS}')
+        print(f'now: {now}')
+        print(f'last_booking: {last_booking}')
         if -MIN_DAYS_BETWEEN_BOOKINGS < days_since < MIN_DAYS_BETWEEN_BOOKINGS:
             await update.message.reply_text(
                 f"Por motivos de eficiencia del tratamiento, se recomienda esperar al menos "
-                f"{MIN_DAYS_BETWEEN_BOOKINGS} días entre sesiones. Por favor intenta agendar más adelante."
+                f"{MIN_DAYS_BETWEEN_BOOKINGS} días entre sesiones. Por favor intenta agendar más adelante.\n"
                 f"En caso de urgencia por favor contáctame directamente."
             )
             return ConversationHandler.END
@@ -93,7 +104,13 @@ async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["name"] = update.message.text
+    # context.user_data["name"] = update.message.text.strip()
+    name = update.message.text.strip()
+    if len(name) < 3 or len(name) > 60:
+        await update.message.reply_text("Por favor introduce un nombre válido.")
+        return NAME
+    
+    context.user_data["name"] = name
     await update.message.reply_text("Perfecto! ¿Cuándo te gustaría reservar? (Ejemplo: 'Julio 21, 4 pm' o '21/07/2026 4pm').\n\n"
                                     "Incluso puedes usar las palabras 'hoy', 'mañana' o 'pasado mañana' (Ejemplo de uso: 'hoy, 4pm' o bien 'mañana, 10am' o 'pasado mañana, 4pm').\n\n"
                                     "Es MUY IMPORTANTE que uses el formato correcto como viene en los ejemplos para poder reservar, por favor.") 
@@ -123,7 +140,7 @@ async def get_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not is_available:
         #await update.message.reply_text("Ese horario ya esta ocupado. ¿Podrías interntar con otra fecha/hora?")
-        available_slots = find_available_slots(service, start_dt, SESSION_LENGHT_MINUTES)
+        available_slots = find_available_slots(service, start_dt, SESSION_LENGHT_MINUTES, holidays_list)
         if not available_slots:
             await update.message.reply_text("Ese horario ya está ocupado y no hay más espacios disponibles ese día. "
                                             "¿Podrías intentar con otra fecha?"
@@ -275,8 +292,17 @@ def build_application(token):
     service = get_calendar_service()
     print(f"Service: {service}")
     current_year = datetime.datetime.now(ZoneInfo('America/Mexico_City')).year
+    # --------------------------------------------------------
     holidays_list = get_mexico_holiday(service, current_year)
     app.bot_data["holidays"] = holidays_list
+    # Here's the real architecture, my perro, so you/we won't forget, pay attention: 
+    # calendar_utils.py functions like "is_within_business_hours()" and "find_available_slots()" require "holidays_list" as an EXPLICIT parameter every 
+    # single time they're called — they don't reach out and grab it from context.bot_data themselves, because calendar_utils.py is supposed to stay 100% platform-agnostic 
+    # (no Telegram-specific stuff like context.bot_data allowed in there, remember that design decision from way back).
+    # So the ACTUAL flow, my perro: bot_setup.py fetches the holidays ONCE at startup, stores them in app.bot_data["holidays"]. 
+    # Then, EVERY time a function in bot_setup.py needs to call something from calendar_utils.py that needs holidays, 
+    # it has to manually GRAB the list out of context.bot_data["holidays"] and PASS it in as an argument.
+    # --------------------------------------------------------
 
     app.job_queue.run_repeating(send_reminders, interval=3600, first=10)
 
