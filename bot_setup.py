@@ -5,7 +5,7 @@ from telegram.ext import (
 )
 from calendar_utils import (get_calendar_service, parse_user_datetime, 
     check_availability, create_booking_event, find_user_bookings, format_spanish_dates,
-    find_available_slots, BUSINESS_START_HOUR, BUSINESS_END_HOUR
+    find_available_slots, get_mexico_holiday, BUSINESS_START_HOUR, BUSINESS_END_HOUR
 )
 import datetime
 from zoneinfo import ZoneInfo
@@ -37,6 +37,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
 
 async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    telegram_user_id = update.effective_user.id
+
     await update.message.reply_text("¡Vamos a agendar tu sesión! ¿Cómo te llamas?")
     return NAME
 
@@ -51,7 +53,8 @@ async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def get_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    parsed_iso, error_reason = parse_user_datetime(update.message.text)
+    holidays_list = context.bot_data["holidays"]
+    parsed_iso, error_reason = parse_user_datetime(update.message.text, holidays_list)
 
     if parsed_iso is None:
         message = ERROR_MESSAGES.get(error_reason, 'Por favor intenta con otra fecha/hora.')
@@ -204,7 +207,7 @@ async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
             )
 
 
-# ==========================================BUILD============================================= #
+# ====================================================================BUILD===================================================================== #
 def build_application(token):
     '''Build and configures the Telegram Aplication with all handlers registered.
        Shared by both the local polling version and the Lambda wenhook version.
@@ -219,6 +222,13 @@ def build_application(token):
        keeps the flow from getting confused if someone types /start mid-booking
     '''
     app = Application.builder().token(token).build()
+
+    service = get_calendar_service()
+    print(f"Service: {service}")
+    current_year = datetime.datetime.now(ZoneInfo('America/Mexico_City')).year
+    holidays_list = get_mexico_holiday(service, current_year)
+    app.bot_data["holidays"] = holidays_list
+
     app.job_queue.run_repeating(send_reminders, interval=3600, first=10)
 
     app.add_handler(CommandHandler("start", start))

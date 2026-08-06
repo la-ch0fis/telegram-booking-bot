@@ -9,9 +9,11 @@ from dateutil import parser as date_parser
 
 
 # SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-
+# Getting holidays, we neeed to call google api for this shit, using the calendar id
+MEXICO_HOLIDAYS_CALENDAR_ID = "en.mexican.official#holiday@group.v.calendar.google.com"
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
+
 
 # We will use this for later development, in case we are international but let's keep it so I won't forget
 SPANISH_MONTHS = {
@@ -40,6 +42,9 @@ RELATIVE_DATES = {
     "day after tomorrow": 2
 }
 
+
+
+
 # We're not working all night, are we? OK, let's define that
 BUSINESS_START_HOUR = 9
 BUSINESS_END_HOUR = 20
@@ -49,15 +54,37 @@ LUNCH_END_HOUR = 14.5  # 2:30 PM
 
 # Holidays, 
 # TODO: we need to do this automatic instead of updating these days each year
-HOLIDAYS_2026 = [
-    "2026-01-01",  # New year
-    "2026-02-02",  # Constitution day
-    "2026-03-16",  # Benito Juárez (observed)
-    "2026-05-01",  # Labor day
-    "2026-09-16",  # Idependence day
-    "2026-11-16",  # Revolution day
-    "2026-12-25",  # Christmas
-]
+# HOLIDAYS_2026 = [
+#     "2026-01-01",  # New year
+#     "2026-02-02",  # Constitution day
+#     "2026-03-16",  # Benito Juárez (observed)
+#     "2026-05-01",  # Labor day
+#     "2026-09-16",  # Idependence day
+#     "2026-11-16",  # Revolution day
+#     "2026-12-25",  # Christmas
+# ]
+
+
+#--------------------------google call to get the holidays------------------------------
+def get_mexico_holiday(service, year):
+    '''Fetches Mexican public holidays for a given year from google's public holiday calendar, avoiding hardcoded yearly list.'''
+    time_min = f"{year}-01-01T00:00:00Z"
+    time_max = f"{year}-12-31T23:59:59Z"
+
+    events_result = service.events().list(
+        calendarId = MEXICO_HOLIDAYS_CALENDAR_ID,
+        timeMin = time_min,
+        timeMax = time_max,
+        singleEvents = True,
+        orderBy = 'startTime'
+    ).execute()
+
+    events = events_result.get('items', [])
+    # print(f'Events cuz: {events}')
+    holiday_dates = [event['start']['date'] for event in events] # holidays are usually all-day events
+    
+    return holiday_dates
+#------------------------------------------------------------------------------------
 
 
 def get_calendar_service():
@@ -110,7 +137,7 @@ def translate_spanish_month(text):
 
 
 
-def parse_user_datetime(raw_text):
+def parse_user_datetime(raw_text, holidays_list):
     '''Converts casual, free-text user input (mixed Spanish/English, relative dates,
        various date formats) into a proper ISO 8601 datetime string usable by the
        Google Calendar API.
@@ -118,6 +145,10 @@ def parse_user_datetime(raw_text):
        Returns a tuple: (parsed_iso_or_None, error_reason_or_None)
        Detects wrong day for a month, like July 32, which is wrong.
     '''
+    # hours_check = is_within_business_hours(dt, holidays_list)
+    # if hours_check is not None:
+    #     return None, hours_check
+    
     text = resolve_relative_date(raw_text)
     text = translate_spanish_month(text)
     # text = strip_filler(text)
@@ -152,7 +183,7 @@ def parse_user_datetime(raw_text):
         if dt < now: # NOTE: if dt < now: return None — catches any resolved date/time that's already in the past, like your July 2003 bug
             return None, "past_date"
         
-        hours_check = is_within_business_hours(dt)
+        hours_check = is_within_business_hours(dt, holidays_list)
         if hours_check is not None:
             return None, hours_check
         # if not is_within_business_hours(dt):
@@ -181,7 +212,7 @@ def check_availability(service, start_time, end_time):
     return len(busy_times) == 0
 
 
-def find_available_slots(service, date_obj, session_length_minutes):
+def find_available_slots(service, date_obj, session_length_minutes, holidays_list):
     '''Scans a single day for available session slots, respecting business hours,
        lunch break, and session length. Returns a list of available datetime objects.
     '''
@@ -190,7 +221,7 @@ def find_available_slots(service, date_obj, session_length_minutes):
     day_end = date_obj.replace(hour=BUSINESS_END_HOUR, minute=0, second=0, microsecond=0)
 
     while current + datetime.timedelta(minutes=session_length_minutes) <= day_end:
-        reason = is_within_business_hours(current)
+        reason = is_within_business_hours(current, holidays_list)
         if reason is None:
             slot_end = current + datetime.timedelta(minutes=session_length_minutes)
             # print('slot_end value: ' + str(slot_end))
@@ -241,20 +272,28 @@ def find_user_bookings(service, telegram_user_id):
     return events_result.get('items', [])
 
 
-def is_holiday(dt):
-    '''Check whether the given date falls on a defined Mexican holiday'''
-    return dt.strftime("%Y-%m-%d") in HOLIDAYS_2026
+def is_holiday(dt, holidays_list):
+    '''Check whether the given date falls on a defined Mexican holiday, using a
+       dynamically-fetched list instead of a hardcoded yearly constant.
+    '''
+    #return dt.strftime("%Y-%m-%d") in HOLIDAYS_2026
+    return dt.strftime("%Y-%m-%d") in holidays_list
 
 
-def is_within_business_hours(dt):
-    '''Checks whether a given date falls within defined business hours.
+def is_within_business_hours(dt, holidays_list):
+    '''Checks whether a given datetime is bookable. Returns a specific reason
+       string on failure: "sunday", "holiday", "outside_hours", "lunch_break",
+       or None if the slot passes all checks.
        Excludes Sundays entirely. 
     '''
     if dt.weekday() == 6:  # Monday=0....Sunday=6
         return "sunday"
     
-    if is_holiday(dt):
-        return "holiday"
+    # if dt.strftime("%Y-%M-%d") in holidays_list:
+    #     return "holiday"
+    
+    if is_holiday(dt, holidays_list):
+         return "holiday"
     
     if not (BUSINESS_START_HOUR <= dt.hour < BUSINESS_END_HOUR):
         return "outside_hours"
@@ -270,6 +309,26 @@ def is_within_business_hours(dt):
 # meaning dt.hour can be exactly 9, but NOT exactly 20. That's actually intentional here, cuz — 
 # we want the business day to run FROM 9am UP TO (but not including) 8pm, so a booking exactly AT 8pm wouldn't count as "within hours" 
 # (since the session would run past closing).    
+
+
+def get_user_last_booking(service, telegram_user_id):
+    '''Finds the user's most recent booking (past or upcoming), to enforce a minimum waiting period between sessions'''
+    events_result = service.events().list(
+        calendarId = 'primary',
+        privateExtendedProperty = f'telegram_user_id = {telegram_user_id}',
+        singleEvents = True,
+        orderBy = 'startTime',
+        maxResults = 20
+    ).execute()
+
+    events = events_result.get('items', [])
+    if not events:
+        return None
+    latest = max(events, key=lambda e: e['start'].get('dateTime', e['start'].get('date')))
+    start_raw = latest['start'].get('dateTime')
+    return datetime.datetime.fromisoformat(start_raw) if start_raw else None
+
+
 
 def format_spanish_dates(dt):
     '''Formats a datetime into natural, readable Spanish string
