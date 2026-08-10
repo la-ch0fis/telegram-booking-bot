@@ -106,6 +106,7 @@ async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context.user_data["name"] = update.message.text.strip()
     name = update.message.text.strip()
+    
     if len(name) < 3 or len(name) > 60:
         await update.message.reply_text("Por favor introduce un nombre válido.")
         return NAME
@@ -247,30 +248,45 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
     '''Checks for bookings starting soon and sends a reminder message to the client.
     '''
-    service = get_calendar_service()
+    try:
+        service = get_calendar_service()
+    except Exception as e:
+        print(f"Reminder job - calendar service error: {e}")
+        return
+    
     now = datetime.datetime.now(ZoneInfo("America/Mexico_City"))
     reminder_window_start = now + datetime.timedelta(hours=23)
     reminder_window_end = now + datetime.timedelta(hours=25)
 
-    event_result = service.events().list(
-        calendarId='primary',
-        timeMin=reminder_window_start.isoformat(),
-        timeMax=reminder_window_end.isoformat(),
-        singleEvents=True,
-        orderBy='startTime'
-    ).execute()
+    try:
+        event_result = service.events().list(
+            calendarId='primary',
+            timeMin=reminder_window_start.isoformat(),
+            timeMax=reminder_window_end.isoformat(),
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+    except Exception as e:
+        print(f"Reminder job - calendar lookup error: {e}")
+        return
 
     events = event_result.get('items', [])
 
     for event in events:
         telegram_user_id = event.get('extendedProperties', {}).get('private', {}).get('telegram_user_id')
-        if telegram_user_id:
+        if not telegram_user_id:
+            continue
+        
+        try:
             start_raw = event['start']['dateTime']
             start_dt = datetime.datetime.fromisoformat(start_raw).astimezone(ZoneInfo("America/Mexico_City"))
             await context.bot.send_message(
                 chat_id=int(telegram_user_id),
                 text=f"¡Recordatorio! Tienes una sesión mañana, {format_spanish_dates(start_dt)}. ¡Nos vemos pronto!"
             )
+        except Exception as e:
+            print(f"Reminder job - failed to message user {telegram_user_id}: {e}")
+            continue # move to the NEXT event, don't let one failure kill the whole batch
 
 
 # ====================================================================BUILD===================================================================== #
