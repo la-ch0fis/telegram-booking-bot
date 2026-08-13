@@ -140,18 +140,19 @@ async def get_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return DATETIME
     
     if not is_available:
-        #await update.message.reply_text("Ese horario ya esta ocupado. ¿Podrías interntar con otra fecha/hora?")
-        available_slots = find_available_slots(service, start_dt, SESSION_LENGHT_MINUTES, holidays_list)
-        if not available_slots:
+        # await update.message.reply_text("Ese horario ya esta ocupado. ¿Podrías interntar con otra fecha/hora?")
+        # available_slots = find_available_slots(service, start_dt, SESSION_LENGHT_MINUTES, holidays_list)
+
+        if not (available_slots := find_available_slots(service, start_dt, SESSION_LENGHT_MINUTES, holidays_list)):
             await update.message.reply_text("Ese horario ya está ocupado y no hay más espacios disponibles ese día. "
                                             "¿Podrías intentar con otra fecha?"
                                 )
         else:
-            suggestions = " ".join([slot.strftime("%I:%M %p") for slot in available_slots[:3]]) # vailable_slots[:3] <-- Only shoes the first 3 suggestions to avoid screen flooding
+            suggestions = " ".join([slot.strftime("%I:%M %p") for slot in available_slots[:3]]) # vailable_slots[:3] <-- Only shows the first 3 suggestions to avoid screen flooding
             await update.message.reply_text(
-                f"Ese horario ya está ocupado. Horarios disponibles ese día: {suggestions}. "
-                f"Por favor escribe la fecha con el horario que prefieras, por ejemplo: "
-                f"'Julio 30, 9am' o 'Julio 30, 9:30am'. "
+                f"Ese horario ya está ocupado.\nHorarios disponibles ese día: {suggestions}.\n "
+                f"Es MUY IMPORTANTE que uses el formato de fecha válido con el horario que prefieras, por ejemplo:\n "
+                f"'Julio 30, 9am' o 'Julio 30, 9:30am'."
             )
         return DATETIME # ask again, stay on same state
     

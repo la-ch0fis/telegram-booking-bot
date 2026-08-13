@@ -224,15 +224,18 @@ def find_available_slots(service, date_obj, session_length_minutes, holidays_lis
     available_slots = []
     current = date_obj.replace(hour=BUSINESS_START_HOUR, minute=0, second=0, microsecond=0)
     day_end = date_obj.replace(hour=BUSINESS_END_HOUR, minute=0, second=0, microsecond=0)
+    now = datetime.datetime.now(ZoneInfo("America/Mexico_City"))
+
 
     while current + datetime.timedelta(minutes=session_length_minutes) <= day_end:
-        reason = is_within_business_hours(current, holidays_list)
-        if reason is None:
-            slot_end = current + datetime.timedelta(minutes=session_length_minutes)
-            # print('slot_end value: ' + str(slot_end))
-            is_free = check_availability(service, current.isoformat(), slot_end.isoformat())
-            if is_free:
-                available_slots.append(current)
+        if current > now: # NEW -- skip anything already in the past
+            reason = is_within_business_hours(current, holidays_list)
+            if reason is None:
+                slot_end = current + datetime.timedelta(minutes=session_length_minutes)
+                # print('slot_end value: ' + str(slot_end))
+                is_free = check_availability(service, current.isoformat(), slot_end.isoformat())
+                if is_free:
+                    available_slots.append(current)
         current += datetime.timedelta(minutes=30) # check every 30-min increment
 
     return available_slots
