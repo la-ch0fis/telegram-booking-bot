@@ -208,7 +208,7 @@ def check_availability(service, start_time, end_time):
     body = {
         "timeMin": start_time,
         "timeMax": end_time,
-        "timeZone": "America/Chicago",
+        "timeZone": "America/Mexico_City",
         "items": [{"id": "primary"}]
     }
     result = service.freebusy().query(body=body).execute()
@@ -253,8 +253,8 @@ def create_booking_event(service, name, start_dt, end_dt, telegram_user_id):
     '''
     event = {
         'summary': f'Session with {name}',
-        'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'America/Chicago'},
-        'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'America/Chicago'},
+        'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'America/Mexico_City'},
+        'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'America/Mexico_City'},
         'extendedProperties': {
             'private': {
                 'telegram_user_id': str(telegram_user_id)
