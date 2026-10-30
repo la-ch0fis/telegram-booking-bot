@@ -349,3 +349,18 @@ def format_spanish_dates(dt):
     time_str = dt.strftime("%I:%M %p").lstrip("0") # removes leading zero. e.g. "3:00 PM" not "03:00 PM"
 
     return f"{day} de {month} de {year} a las {time_str}"
+
+
+def mark_reminder(service, event_id):
+    '''Flags an event as reminded so the hourly job never send it twice.
+       The flag lives on the event itself, like telegram_user_id. patch() only
+       sends the keys we give it, and google merges them into extendedProperties.private,
+       so telegram_user_id stays in place.
+    '''
+    service.events().patch(
+        calendarId = 'primary',
+        eventId = event_id,
+        body = {
+            'extendedProperties': {'private': {'reminder': '1'}}
+        },
+    ).execute()

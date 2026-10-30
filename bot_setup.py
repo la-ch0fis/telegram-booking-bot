@@ -6,7 +6,7 @@ from telegram.ext import (
 from calendar_utils import (get_calendar_service, parse_user_datetime, 
     check_availability, create_booking_event, find_user_bookings, format_spanish_dates,
     find_available_slots, get_mexico_holiday, get_user_last_booking, BUSINESS_START_HOUR, 
-    BUSINESS_END_HOUR, MIN_DAYS_BETWEEN_BOOKINGS
+    BUSINESS_END_HOUR, MIN_DAYS_BETWEEN_BOOKINGS, mark_reminder
 )
 import datetime
 import time
@@ -21,6 +21,7 @@ ENFORCE_WEEKLY_LIMIT = False
 NAME, DATETIME = range(2)
 SESSION_LENGHT_MINUTES = 90
 CONFIRM_CANCEL = range(3, 4)[0]
+RESCHEDULE = 4
 
 # --- Rate limiting config ---
 RATE_LIMIT_MAX_ATTEMPTS = 3
@@ -104,6 +105,9 @@ async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    '''This function asks for the client's name when booking and also validates the lenght of it,
+       it has to be greater that 3 chars but less than 60.
+    '''
     # context.user_data["name"] = update.message.text.strip()
     name = update.message.text.strip()
     
@@ -173,6 +177,10 @@ async def get_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cancel_booking_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    '''Fires when the user/client wants to cancel a booked session, the function checks
+       if there are actual actve sessions booked and if there are not, a message saying so will be displayed
+    '''
+    context.user_data["cancel_done"] = False  # it resets a flag the timeout message uses
     telegram_user_id = update.effective_user.id
     service = get_calendar_service()
 
@@ -183,7 +191,10 @@ async def cancel_booking_start(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("Estoy teniendo problemas para revisar la agenda, por favor intenta de nuevo.")
         return ConversationHandler.END    
     
-    if not bookings[0]:
+    # if not bookings[0]: <-- This was causing a list index out of range, sometimes we don't have any appointments to cancel.
+    # The reason: bookings[0] asks for the first item before checking that there is one, so an empty list crashes right there. 
+    # not bookings just asks whether the list is empty, which is what you meant.
+    if not bookings:
         await update.message.reply_text("No tienes ninguna sesión agendada para cancelar.")
         return ConversationHandler.END
     # For now, handle the FIRST upcoming booking first (simplest case)
@@ -194,7 +205,7 @@ async def cancel_booking_start(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await update.message.reply_text(
         f"Tienes sesión para {format_spanish_dates(start_dt)}."
-        f"Escribe SI para cancelar, o NO para conservar tu sesión."
+        f" Escribe SI para cancelar, o NO para conservar tu sesión."
     )
     return CONFIRM_CANCEL
 
@@ -216,24 +227,68 @@ async def confirm_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         try:
             service.events().delete(calendarId='primary', eventId=event_id).execute()
-            await update.message.reply_text("Tu sesión ha sido cancelada con éxito, saludos.")
+            # await update.message.reply_text("Tu sesión ha sido cancelada con éxito!.")
         except Exception as e:
             print(f"Concellation error: {e}")
             await update.message.reply_text("Una disculpa, tengo problemas para cancelar tu sesión, intentalo de nuevo o contactame directamente.")
-    else:
-        await update.message.reply_text("Muy bien, tu sesión sigue activa.")
-
+            return ConversationHandler.END
+        
+        context.user_data["cancel_done"] = True # The timeout message depends on this
+        await update.message.reply_text(
+            "Tu sesión ha sido cancelada con éxito. \n\n"
+            "¿Te gustaría reservar para otra fecha? Escribe SI para agendar o simplemente NO para salir"
+        )
+        return RESCHEDULE
+    
+    await update.message.reply_text("Muy bien, tu sesión sigue activa.")
     return ConversationHandler.END
+
+
+async def reschedule_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    '''Answers to "do you want to book another date? Only SI or NO are accepted" '''
+    answer = update.message.text.strip().lower()
+    if answer in ("si", "sí"):
+        return await book_start(update, context) # same entry as /agendar: rate limit, then asks the name
+    if answer == "no":
+        await update.message.reply_text("Perfecto, hasta la próxima!")
+        return ConversationHandler.END
+    await update.message.reply_text(
+        "Sólo puedo aceptar SI o NO. ¿Te gustaría reservar para otra fecha?"
+    )
+    return RESCHEDULE
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    '''Cancels a booked session'''
     await update.message.reply_text("Sesión cancelada.")
     return ConversationHandler.END
 
-
+# Timeout Handler ============================================================================================================
 async def timeout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    '''Fires when the user/client takes too long to confirm, the convo needs to be closed.'''
     await update.message.reply_text("La reservación se canceló por inactividad. Escribe /agendar para intentar de nuevo.")
     return ConversationHandler.END
+
+
+# Cancel Timeout Handler ============================================================================================================
+async def cancel_timeout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    '''Fires after 90 s of silence anywhere in the cancel conversation.
+       Two situations: still at the "are you sure?" question (nothing deleted yet),
+       or already cancelled and asked about rescheduling.
+    '''
+    if context.user_data.get("cancel_done"):
+        await update.message.reply_text(
+            "Pasaron 90 segundos sin respuesta, así que cerré la conversación."
+            "Tu sesión ya quedó cancelada. Escribe /agendar cuando quieras reservar de nuevo."
+        )
+    else:
+        await update.message.reply_text(
+            "Pasaron 90 segundos sin confirmación, así que conservé tu sesión tal como está."
+            "Si de verdad quieres cancelarla, escribe /cancelar de nuevo."
+        )
+        
+    return ConversationHandler.END
+
 
 # Handler for random messages ===============================================================================================
 async def unknown_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -274,20 +329,46 @@ async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
     events = event_result.get('items', [])
 
     for event in events:
-        telegram_user_id = event.get('extendedProperties', {}).get('private', {}).get('telegram_user_id')
+        private_props = event.get('extendedProperties', {}).get('private', {})
+        telegram_user_id = private_props.get('telegram_user_id')
         if not telegram_user_id:
             continue
+        if private_props.get('reminded') == '1':
+            continue # already reminded, skip
         
         try:
             start_raw = event['start']['dateTime']
             start_dt = datetime.datetime.fromisoformat(start_raw).astimezone(ZoneInfo("America/Mexico_City"))
             await context.bot.send_message(
                 chat_id=int(telegram_user_id),
-                text=f"¡Recordatorio! Tienes una sesión mañana, {format_spanish_dates(start_dt)}. ¡Nos vemos pronto!"
+                text=f"¡Recordatorio! Tienes una sesión mañana, {format_spanish_dates(start_dt)}. Nos vemos pronto!"
             )
         except Exception as e:
             print(f"Reminder job - failed to message user {telegram_user_id}: {e}")
-            continue # move to the NEXT event, don't let one failure kill the whole batch
+            continue # Move to the next event, don't let one failure to kill the whole batch
+
+        # Mark AFTER a successful send. If marking fails, the worst case is one
+        # duplicated reminder next hour; marking first could lose a reminder instead.
+        try:
+            mark_reminder(service, event['id'])
+        except Exception as e:
+            print(f"Reminder job - sent, but could not mark event {event['id']} as reminded: {e}")
+
+    # for event in events:
+    #     telegram_user_id = event.get('extendedProperties', {}).get('private', {}).get('telegram_user_id')
+    #     if not telegram_user_id:
+    #         continue
+        
+    #     try:
+    #         start_raw = event['start']['dateTime']
+    #         start_dt = datetime.datetime.fromisoformat(start_raw).astimezone(ZoneInfo("America/Mexico_City"))
+    #         await context.bot.send_message(
+    #             chat_id=int(telegram_user_id),
+    #             text=f"¡Recordatorio! Tienes una sesión mañana, {format_spanish_dates(start_dt)}. ¡Nos vemos pronto!"
+    #         )
+    #     except Exception as e:
+    #         print(f"Reminder job - failed to message user {telegram_user_id}: {e}")
+    #         continue # move to the NEXT event, don't let one failure kill the whole batch
 
 
 # ====================================================================BUILD===================================================================== #
@@ -312,13 +393,14 @@ def build_application(token):
     # --------------------------------------------------------
     holidays_list = get_mexico_holiday(service, current_year)
     app.bot_data["holidays"] = holidays_list
-    # Here's the real architecture, my perro, so you/we won't forget, pay attention: 
+    # Here's the real architecture, my perro, so I won't forget, pay attention to this shit: 
     # calendar_utils.py functions like "is_within_business_hours()" and "find_available_slots()" require "holidays_list" as an EXPLICIT parameter every 
     # single time they're called — they don't reach out and grab it from context.bot_data themselves, because calendar_utils.py is supposed to stay 100% platform-agnostic 
     # (no Telegram-specific stuff like context.bot_data allowed in there, remember that design decision from way back).
     # So the ACTUAL flow, my perro: bot_setup.py fetches the holidays ONCE at startup, stores them in app.bot_data["holidays"]. 
     # Then, EVERY time a function in bot_setup.py needs to call something from calendar_utils.py that needs holidays, 
     # it has to manually GRAB the list out of context.bot_data["holidays"] and PASS it in as an argument.
+    # Come back here and read this again cause' it is kind of tricky and this is the first time I did it.
     # --------------------------------------------------------
 
     app.job_queue.run_repeating(send_reminders, interval=3600, first=10)
@@ -342,9 +424,14 @@ def build_application(token):
     cancel_handler = ConversationHandler(
         entry_points = [CommandHandler("cancelar", cancel_booking_start)],
         states = {
-            CONFIRM_CANCEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_cancel)]
+            CONFIRM_CANCEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_cancel)],
+            RESCHEDULE : [MessageHandler(filters.TEXT & ~filters.COMMAND, reschedule_answer)],
+            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+            DATETIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_datetime)],
+            ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, cancel_timeout_handler)]
         },
-        fallbacks = [CommandHandler("cancelar", cancel)]
+        fallbacks = [CommandHandler("cancelar", cancel)],
+        conversation_timeout = 90 # seconds of inactivity befoire the confirmation expires
     )
     app.add_handler(cancel_handler)
 
